@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bank DApp | Hoodi</title>
+  <style>
+    body { margin: 0; padding: 24px 16px; background: #f0f4f8; color: #182338; font: 1rem/1.6 system-ui, sans-serif; }
+    main { max-width: 36rem; margin: 2rem auto; padding: 1.5rem; border-radius: 1rem; background: white; }
+    h1 { margin-top: 0; }
+    label { display: block; margin-top: .75rem; }
+    input, button { font: inherit; padding: .45rem .65rem; border: 1px solid #62748b; border-radius: .35rem; }
+    input { box-sizing: border-box; width: 100%; }
+    button { margin: .6rem .2rem 0 0; background: #103f62; color: #fff; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: default; }
+    #account { overflow-wrap: anywhere; }
+    #status { min-height: 1.6em; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Bank DApp · Hoodi</h1>
+    <p>ธนภัทร หนูบุญมี · 66031036</p>
+
+    <label for="contract">Contract Address บน Hoodi</label>
+    <input id="contract" autocomplete="off" placeholder="0x…">
+    <label for="infura">Infura API Key</label>
+    <input id="infura" type="password" autocomplete="off">
+
+    <button id="connect">Connect MetaMask</button>
+    <p id="account">ยังไม่ได้เชื่อมกระเป๋า</p>
+    <p>ยอดฝากในสัญญา <strong id="balance">–</strong></p>
+
+    <label for="amount">จำนวน ETH</label>
+    <input id="amount" inputmode="decimal" placeholder="0.001">
+    <button id="deposit" disabled>Deposit</button>
+    <button id="withdraw" disabled>Withdraw</button>
+    <button id="check" disabled>Check Balance</button>
+    <p id="status" role="status" aria-live="polite"></p>
+    <a id="transaction" target="_blank" rel="noopener noreferrer" hidden>ดูธุรกรรมล่าสุดบน Hoodi Etherscan</a>
+  </main>
+
+  <script type="module">
+    import { ethers } from "https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.min.js";
+
+    const CONTRACT_ADDRESS = "0x3649b5DC32d497b7FA9f32d184A18DfDB5B08b17";
+    const INFURA_API_KEY = "";
+    const HOODI_CHAIN_ID = 560048;
+    const abi = [
+      "function deposit() payable",
+      "function withdraw(uint256 amount)",
+      "function checkBalance() view returns (uint256)"
+    ];
+
+    const wallet = window.ethereum;
+    const ui = (id) => document.getElementById(id);
+    const bankButtons = ["deposit", "withdraw", "check"];
+    let connection;
+
+    ui("contract").value = CONTRACT_ADDRESS;
+    ui("infura").value = INFURA_API_KEY;
+
+    function clearConnection() {
+      connection = null;
+      ui("account").textContent = "ยังไม่ได้เชื่อมกระเป๋า";
+      ui("balance").textContent = "–";
+      ui("status").textContent = "";
+      bankButtons.forEach((name) => { ui(name).disabled = true; });
+    }
+
+    function bindButton(id, action) {
+      ui(id).onclick = async () => {
+        const controls = document.querySelectorAll("button, input");
+        controls.forEach((control) => { control.disabled = true; });
+        ui("status").textContent = "กำลังดำเนินการ…";
+
+        try {
+          ui("status").textContent = await action();
+        } catch (error) {
+          ui("status").textContent = error.code === "ACTION_REJECTED" || error.code === 4001
+            ? "ยกเลิกคำขอใน MetaMask"
+            : error.reason || error.shortMessage || error.message;
+        } finally {
+          controls.forEach((control) => { control.disabled = false; });
+          bankButtons.forEach((name) => { ui(name).disabled = !connection; });
+        }
+      };
+    }
+
+    async function showBalance({ account, readBank }) {
+      // The sample contract checks msg.sender, so eth_call needs the account.
+      const balance = await readBank.checkBalance({ from: account });
+      ui("balance").textContent = ethers.formatEther(balance) + " ETH";
+    }
+
+    bindButton("connect", async () => {
+      clearConnection();
+      const address = ui("contract").value.trim();
+      const key = ui("infura").value.trim();
+
+      if (!wallet) throw new Error("กรุณาเปิดเว็บในเบราว์เซอร์ที่มี MetaMask");
+      if (!ethers.isAddress(address)) throw new Error("กรุณาใส่ Contract Address จาก Remix");
+      if (!/^[a-zA-Z0-9_-]+$/.test(key)) throw new Error("กรุณาใส่ Infura API Key");
+
+      await wallet.request({ method: "eth_requestAccounts" });
+      const provider = new ethers.BrowserProvider(wallet);
+      if ((await provider.getNetwork()).chainId !== BigInt(HOODI_CHAIN_ID)) {
+        throw new Error("เลือก Hoodi ใน MetaMask แล้วกด Connect อีกครั้ง");
+      }
+
+      const infura = new ethers.JsonRpcProvider(
+        "https://hoodi.infura.io/v3/" + key,
+        HOODI_CHAIN_ID
+      );
+      let code;
+      try {
+        code = await infura.getCode(address);
+      } catch {
+        throw new Error("เชื่อมต่อ Infura ไม่สำเร็จ กรุณาตรวจ API Key และสิทธิ์ใช้งาน Hoodi");
+      }
+      if (code === "0x") throw new Error("ไม่พบ Smart Contract ที่ Address นี้บน Hoodi");
+
+      const signer = await provider.getSigner();
+      const account = await signer.getAddress();
+      const next = {
+        account,
+        readBank: new ethers.Contract(address, abi, infura),
+        writeBank: new ethers.Contract(address, abi, signer)
+      };
+
+      await showBalance(next);
+      connection = next;
+      ui("account").textContent = account;
+      return "เชื่อมต่อสำเร็จ";
+    });
+
+    bindButton("check", async () => {
+      await showBalance(connection);
+      return "อัปเดตยอดแล้ว";
+    });
+
+    function isRateLimited(error) {
+      const rpcError = error.error ?? error.info?.error ?? error;
+      return rpcError.code === -32005
+        || rpcError.code === 429
+        || rpcError.data?.httpStatus === 429
+        || error.response?.statusCode === 429;
+    }
+
+    async function waitForTransaction(tx) {
+      const retryDelays = [5000, 10000];
+      for (const delay of retryDelays) {
+        try {
+          return await tx.wait(1, 30000);
+        } catch (error) {
+          if (!isRateLimited(error)) throw error;
+          ui("status").textContent = "RPC จำกัดการเรียกชั่วคราว กำลังรอก่อนตรวจผลอีกครั้ง…";
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
+      return tx.wait(1, 30000);
+    }
+
+    async function sendTransaction(send) {
+      const current = connection;
+      const input = ui("amount").value.trim();
+      if (!/^\d+(\.\d{1,18})?$/.test(input)) throw new Error("กรอกจำนวน ETH เช่น 0.001");
+      const amount = ethers.parseEther(input);
+      if (amount <= 0n) throw new Error("จำนวนต้องมากกว่า 0");
+
+      const tx = await send(current.writeBank, amount);
+      const transactionLink = ui("transaction");
+      transactionLink.href = "https://hoodi.etherscan.io/tx/" + tx.hash;
+      transactionLink.hidden = false;
+      ui("status").textContent = "ส่งธุรกรรมแล้ว กำลังรอยืนยัน…";
+
+      try {
+        await waitForTransaction(tx);
+      } catch (error) {
+        if (error.code === "TRANSACTION_REPLACED") {
+          transactionLink.href = "https://hoodi.etherscan.io/tx/" + error.replacement.hash;
+          if (error.cancelled) return "ธุรกรรมเดิมถูกแทนที่ ตรวจผลจากลิงก์ด้านล่าง";
+          if (error.receipt?.status === 0) return "ธุรกรรมที่แทนที่ดำเนินการไม่สำเร็จ";
+        } else if (error.receipt?.status === 0) {
+          return "ธุรกรรมยืนยันแล้ว แต่สัญญาปฏิเสธรายการ";
+        } else {
+          return "ส่งธุรกรรมแล้ว แต่ยังตรวจผลไม่ได้ กรุณาเปิดลิงก์ด้านล่างก่อนส่งรายการอีกครั้ง";
+        }
+      }
+
+      try {
+        await showBalance(current);
+        return "ธุรกรรมสำเร็จและอัปเดตยอดแล้ว";
+      } catch {
+        return "ธุรกรรมสำเร็จ กด Check Balance เพื่ออ่านยอดอีกครั้ง";
+      }
+    }
+
+    bindButton("deposit", () =>
+      sendTransaction((bank, amount) => bank.deposit({ value: amount }))
+    );
+    bindButton("withdraw", () =>
+      sendTransaction((bank, amount) => bank.withdraw(amount))
+    );
+
+    ui("contract").addEventListener("input", clearConnection);
+    ui("infura").addEventListener("input", clearConnection);
+    wallet?.on?.("accountsChanged", () => {
+      if (connection) clearConnection();
+    });
+    wallet?.on?.("chainChanged", () => location.reload());
+  </script>
+</body>
+</html>
