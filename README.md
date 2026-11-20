@@ -3,7 +3,7 @@
 **ผู้จัดทำ:** นาย ธนภัทร หนูบุญมี  
 **รหัสนักศึกษา:** 66031036
 
-[เปิดเว็บ Bank DApp](https://thanapat-hnu.github.io/assignment7/)
+[เปิดเว็บ Bank DApp](https://thanapatbb.github.io/CSI301A7/)
 
 เว็บสำหรับฝาก ถอน และตรวจสอบยอดเงินฝากใน Smart Contract บน Ethereum Hoodi โดยใช้ MetaMask ยืนยันธุรกรรม และใช้ Infura อ่านยอดจากสัญญา
 
